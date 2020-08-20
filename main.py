@@ -89,7 +89,7 @@ def buy(price, deposit, interest_rate, period, growth, monthly_expenses, inflati
         expenses_accum[month] = expenses_accum[month-1] + expenses[month]
         bond_accum[month] = bond_accum[month-1] + bond[month]
         bond_interest_accum[month] = bond_interest_accum[month-1] + bond_interest[month]
-        nett[month] = housevalue[month]- bond_outstanding[month] - expenses_accum[month] -bond_interest_accum[month]
+        nett[month] = housevalue[month]- bond_outstanding[month] 
         
     return {"month":months,
             "housevalue":housevalue, 
@@ -127,7 +127,7 @@ def rent(start_rent, rent_increase, savings_interest, buy_data):
     interest_accum = np.zeros(period)
 
     # Initialise month 0 state
-    savings[0]  = buy_data["expenses"][0] + buy_data["bond"][0]
+    savings[0]  = buy_data["expenses"][0] + buy_data["bond"][0] - start_rent
     rent[0]     = start_rent
     interest[0] = 0 
     rent_accum[0] = rent[0]
@@ -340,7 +340,7 @@ plot_f.line('month', 'buy nett', source=source_nett_data,
             legend="Buy Nett", color="red",
             line_width=lw, line_alpha=la)
 plot_f.line('month', 'rent nett', source=source_nett_data, 
-            legend="Rent Rent", color="blue",
+            legend="Rent Nent", color="blue",
             line_width=lw, line_alpha=la)
 plot_f.legend.location="top_left"
 plot_f.legend.click_policy="hide"
