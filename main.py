@@ -2,7 +2,7 @@ import numpy as np
 
 from bokeh.io import curdoc
 from bokeh.layouts import column, row
-from bokeh.models import ColumnDataSource, Slider, TextInput
+from bokeh.models import ColumnDataSource, Slider, TextInput, Div
 from bokeh.plotting import figure
 
 def calc_transfer_duty(purchase_price):
@@ -49,6 +49,7 @@ def buy(price, deposit, interest_rate, period, growth, monthly_expenses, inflati
     # Create empty datasets
     months              = np.arange(period)
     housevalue          = np.zeros(period)
+    growth_accum        = np.zeros(period)
     expenses            = np.zeros(period)
     expenses_accum      = np.zeros(period)
     bond                = np.zeros(period)
@@ -79,6 +80,7 @@ def buy(price, deposit, interest_rate, period, growth, monthly_expenses, inflati
     # Calculate financial state month by month
     for month in range(1, period):
         housevalue[month] = housevalue[month-1]*((1+growth)**(1/12))
+        growth_accum[month] =growth_accum[month-1] + (housevalue[month] - housevalue[month-1])
         expenses[month] = expenses[month-1]*((1+inflation)**(1/12))
         bond[month] = bond_payment
         bond_interest[month] = bond_outstanding[month-1]*((1+interest_rate/12)**(12/12)-1)
@@ -87,10 +89,11 @@ def buy(price, deposit, interest_rate, period, growth, monthly_expenses, inflati
         expenses_accum[month] = expenses_accum[month-1] + expenses[month]
         bond_accum[month] = bond_accum[month-1] + bond[month]
         bond_interest_accum[month] = bond_interest_accum[month-1] + bond_interest[month]
-        nett[month] = housevalue[month] - expenses_accum[month] -bond_interest_accum[month]- bond_outstanding[month]
+        nett[month] = housevalue[month]- bond_outstanding[month] - expenses_accum[month] -bond_interest_accum[month]
         
     return {"month":months,
             "housevalue":housevalue, 
+            "growth_accum":growth_accum, 
             "expenses":expenses, 
             "expenses_accum":expenses_accum, 
             "bond":bond, 
@@ -119,29 +122,34 @@ def rent(start_rent, rent_increase, savings_interest, buy_data):
     period      = len(months)
     savings     = np.zeros(period)
     rent        = np.zeros(period)
+    rent_accum  = np.zeros(period)
     interest    = np.zeros(period) 
+    interest_accum = np.zeros(period)
 
     # Initialise month 0 state
     savings[0]  = buy_data["expenses"][0] + buy_data["bond"][0]
     rent[0]     = start_rent
     interest[0] = 0 
+    rent_accum[0] = rent[0]
 
     # Calculate financial state month by month
     for month in range(1, period):
         # Update rent on a yearly basis
         rent[month]     = rent[month-1]
+        rent_accum[month] = rent_accum[month-1] + rent[month]
         if month%12 == 0:
             rent[month] += rent[month]*rent_increase
 
         # Update our savings with monthly interest (beware of capital gain tax)
         interest[month] = savings[month-1]*((1+savings_interest/12)**(12/12) - 1)
+        interest_accum[month] = interest_accum[month-1] + interest[month]
         savings[month]  = savings[month-1] + interest[month]
         # What would have been spent in the house-buy case
         savings[month]  += (buy_data["bond"][month] + buy_data["expenses"][month])
         #Savings that we lose due to renting 
         savings[month]  -= rent[month]
 
-    return {"month":months, "savings":savings, "rent":rent, "interest":interest}
+    return {"month":months, "savings":savings, "rent":rent, "rent_accum":rent_accum, "interest":interest, "interest_accum":interest_accum}
 
 def rent_to_buy(delay, interest_rate, growth, inflation, rent_data, buy_data):
     """
@@ -207,18 +215,46 @@ def update_data(attrname, old, new):
     rent_data = rent(rent_start, rent_increase, savings_interest, buy_data)
     rent_to_buy_data = rent_to_buy(buy_delay, interest, growth, inflation, rent_data, buy_data)
 
+    # Calculate ROI for 3 cases
+    buy_monthly_roi     = buy_data["nett"][-1]/buy_data["month"][-1]
+    rent_monthly_roi    = rent_data["savings"][-1]/rent_data["month"][-1]
+    r2b_monthly_roi 	= rent_to_buy_data["nett"][-1]/rent_to_buy_data["month"][-1]
+
+    # Calculate the monthly expenses and income for buy and rent cases
+    buy_initial_expenses = buy_data["bond"][0]-deposit
+    buy_expenses    = buy_data["bond_interest_accum"] + buy_data["expenses_accum"] 
+    buy_income      = buy_data["growth_accum"]
+    rent_expenses   = rent_data["rent_accum"]
+    rent_income     = rent_data["interest_accum"]
+    buy_nett        = buy_income - buy_expenses - buy_initial_expenses
+    rent_nett       = rent_income - rent_expenses
+
+    # Update plot sources
     source_buy_data.data = buy_data
     source_rent_data.data = rent_data
     source_rent_to_buy_data.data = rent_to_buy_data
+    source_nett_data.data = {"month":buy_data["month"], "buy nett":buy_nett, "rent nett":rent_nett} 
+
+    # Update text items
+    div_buy_roi.text    = f"Buy  ROI: {buy_monthly_roi:.1f}"
+    div_rent_roi.text   = f"Rent ROI: {rent_monthly_roi:.1f}"
+    div_r2b_roi.text    = f"R2B  ROI: {r2b_monthly_roi:.1f}"
 
 # Set up data
-data = {"month":[], "housevalue":[], "expenses":[], 
+data = {"month":[], "housevalue":[], "growth_accum":[], "expenses":[], 
         "expenses_accum":[], "bond":[], "bond_interest":[], "bond_interest_accum":[], 
         "bond_outstanding":[], "nett":[]}
 source_buy_data = ColumnDataSource(data=data)
 source_rent_to_buy_data = ColumnDataSource(data=data)
-data = {"month":[], "savings":[], "rent":[], "interest":[]}
+data = {"month":[], "savings":[], "rent":[], "rent_accum":[], "interest":[], "interest_accum":[]}
 source_rent_data = ColumnDataSource(data=data)
+data = {"month":[], "buy nett":[], "rent nett":[]}
+source_nett_data = ColumnDataSource(data=data)
+
+# Setup text objects
+div_buy_roi             = Div(text="") 
+div_rent_roi            = Div(text="") 
+div_r2b_roi             = Div(text="") 
 
 # Set up plot
 tools = "crosshair,pan,reset,save,wheel_zoom"
@@ -226,7 +262,7 @@ width = 600
 height = 180
 lw = 3
 la = 0.7
-plot_a = figure(plot_height=height, plot_width=width, tools=tools)
+plot_a = figure(plot_height=height*2, plot_width=width, tools=tools)
 plot_a.line('month', 'housevalue', source=source_buy_data,
             legend="House Value", color='red',
             line_width=lw, line_alpha=la)
@@ -234,15 +270,24 @@ plot_a.line('month', 'expenses_accum', source=source_buy_data,
             legend="Expenses Cumulative", color='blue',
             line_width=lw, line_alpha=la)
 plot_a.line('month', 'bond_interest_accum', source=source_buy_data,
-            legend="Interest Cumulative", color="green",
+            legend="Bond Interest Cumulative", color="green",
+            line_width=lw, line_alpha=la)
+plot_a.line('month', 'growth_accum', source=source_buy_data,
+            legend="Growth Cumulative", color="magenta",
             line_width=lw, line_alpha=la)
 plot_a.line('month', 'bond_outstanding', source=source_buy_data,
             legend="Bond Outstanding", color="orange",
             line_width=lw, line_alpha=la)
+plot_a.line('month', 'rent_accum', source=source_rent_data,
+            legend="Rent Cumulative", color="purple",
+            line_width=lw, line_alpha=la)
+plot_a.line('month', 'interest_accum', source=source_rent_data,
+            legend="Savings Interest Cumulative", color="black",
+            line_width=lw, line_alpha=la)
 plot_a.legend.location="top_left"
 plot_a.legend.click_policy="hide"
 
-plot_b = figure(plot_height=height, plot_width=width, tools=tools, y_range=[0,100000])
+plot_b = figure(plot_height=height*2, plot_width=width, tools=tools, y_range=[0,50000])
 plot_b.line('month', 'expenses', source=source_buy_data, 
             legend="House Expenses", color="red",
             line_width=lw, line_alpha=la)
@@ -252,21 +297,17 @@ plot_b.line('month', 'bond', source=source_buy_data,
 plot_b.line('month', 'bond_interest', source=source_buy_data, 
             legend="Bond Interest", color="green",
             line_width=lw, line_alpha=la)
+plot_b.line('month', 'expenses', source=source_rent_to_buy_data, 
+            legend="House Expenses R2B", color="darkred",
+            line_width=lw, line_alpha=la)
+plot_b.line('month', 'bond', source=source_rent_to_buy_data,
+            legend="Bond Payments R2B", color="darkblue",
+            line_width=lw, line_alpha=la)
+plot_b.line('month', 'bond_interest', source=source_rent_to_buy_data, 
+            legend="Bond Interest R2B", color="darkgreen",
+            line_width=lw, line_alpha=la)
 plot_b.legend.location="top_left"
 plot_b.legend.click_policy="hide"
-
-plot_c = figure(plot_height=height, plot_width=width, tools=tools, y_range=[0,100000])
-plot_c.line('month', 'expenses', source=source_rent_to_buy_data, 
-            legend="House Expenses R2B", color="red",
-            line_width=lw, line_alpha=la)
-plot_c.line('month', 'bond', source=source_rent_to_buy_data,
-            legend="Bond Payments R2B", color="blue",
-            line_width=lw, line_alpha=la)
-plot_c.line('month', 'bond_interest', source=source_rent_to_buy_data, 
-            legend="Bond Interest R2B", color="green",
-            line_width=lw, line_alpha=la)
-plot_c.legend.location="top_left"
-plot_c.legend.click_policy="hide"
 
 plot_d = figure(plot_height=height, plot_width=width, tools=tools)
 plot_d.line('month', 'rent', source=source_rent_data, 
@@ -293,6 +334,16 @@ plot_e.line('month', 'nett', source=source_rent_to_buy_data,
             line_width=lw, line_alpha=la)
 plot_e.legend.location="top_left"
 plot_e.legend.click_policy="hide"
+
+plot_f = figure(plot_height=height, plot_width=width, tools=tools)
+plot_f.line('month', 'buy nett', source=source_nett_data, 
+            legend="Buy Nett", color="red",
+            line_width=lw, line_alpha=la)
+plot_f.line('month', 'rent nett', source=source_nett_data, 
+            legend="Rent Rent", color="blue",
+            line_width=lw, line_alpha=la)
+plot_f.legend.location="top_left"
+plot_f.legend.click_policy="hide"
 
 # Set up widgets
 slider_houseprice   = Slider(title="House Price",   value=2600000, start=600000, end=3000000, step=100000)
@@ -329,8 +380,9 @@ for w in slider_list:
     w.on_change('value', update_data)
 
 # Set up layouts and add to document
-col_inputs = column(slider_list)
+div_list = [div_buy_roi, div_rent_roi, div_r2b_roi]
+col_inputs = column(slider_list+div_list)
 
-col_plots = column(plot_a, plot_b, plot_c, plot_d, plot_e)
+col_plots = column(plot_a, plot_b, plot_d, plot_e, plot_f)
 curdoc().add_root(row(col_inputs, col_plots, width=800))
 curdoc().title = "Homework"
