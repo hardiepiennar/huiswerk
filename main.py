@@ -191,6 +191,83 @@ def rent_to_buy(delay, interest_rate, growth, inflation, rent_data, buy_data):
 
     return rent_to_buy_data
 
+def buy_and_rent(buy_data, rent_expense, rent_income, rent_increase, savings_interest, monthly_investment):
+    """
+    Calculate the monthly financial state for the property renting case while buying a 
+    low cost to-rent property. This is a hybrid stratedgy aiming to reduce the effect
+    of bond payments while making use of the additional rent income to make
+    a profit. The to-rent property can therefore be below the individuals living
+    standards.
+
+    Args:
+        buy_data: The data for the to-rent property
+        rent_expense: rent in your current area
+        rent_increase: yearly discrete increase in rent 
+        rent_income: rent income from the bought property
+        savings_interest: yearly interest rate on savings (applied on month by month basis) 
+        monthly_investment: The monthly amount that you would like to invest,
+                            rent and bond expenses are subtracted from this 
+
+    Returns:
+        buy and rent monthly data 
+    """
+    # Initialise datasets
+    months      = buy_data["month"]
+    period      = len(months)
+    savings     = np.zeros(period)
+    rent_in     = np.zeros(period)
+    rent_in_accum  = np.zeros(period)
+    rent_out    = np.zeros(period)
+    rent_out_accum  = np.zeros(period)
+    interest    = np.zeros(period) 
+    interest_accum = np.zeros(period)
+    nett = np.zeros(period)
+
+    # Initialise month 0 state
+    savings[0]  = rent_income - rent_expense 
+    rent_in[0]  = rent_income
+    rent_out[0]  = rent_expense
+
+    interest[0] = 0 
+    rent_in_accum[0] = rent_income
+    rent_out_accum[0] = rent_expense
+
+    # Calculate financial state month by month
+    for month in range(1, period):
+        # Update rent on a yearly basis
+        rent_in[month]     = rent_in[month-1]
+        rent_out[month]     = rent_out[month-1]
+        rent_out_accum[month] = rent_out_accum[month-1] + rent_out[month]
+        if month%12 == 0:
+            rent_in[month] += rent_in[month]*rent_increase
+            rent_out[month] += rent_out[month]*rent_increase
+
+        # Update our savings with monthly interest (beware of capital gain tax)
+        interest[month] = savings[month-1]*((1+savings_interest/12)**(12/12) - 1)
+        interest_accum[month] = interest_accum[month-1] + interest[month]
+        savings[month]  = savings[month-1] + interest[month]
+        # Monthly investment
+        savings[month] += monthly_investment
+        # What we spend because we bought the property 
+        savings[month]  -= buy_data["bond"][month] + buy_data["expenses"][month]
+        # What we get because we bought the property 
+        savings[month]  += rent_in[month]
+        # TODO TAX
+        #Savings that we lose due to renting 
+        savings[month]  -= rent_out[month]
+
+        nett[month] = buy_data["nett"][month] + savings[month]
+        
+    return {"month":months, 
+            "savings":savings, 
+            "rent_in":rent_in, 
+            "rent_in_accum":rent_in_accum, 
+            "rent_out":rent_out, 
+            "rent_out_accum":rent_out_accum, 
+            "interest":interest, 
+            "interest_accum":interest_accum,
+            "nett":nett}
+
 def update_data(attrname, old, new):
     houseprice      = slider_houseprice.value   
     deposit         = slider_deposit.value 
@@ -203,6 +280,8 @@ def update_data(attrname, old, new):
     insurance       = slider_insurance.value 
     water           = slider_utilities.value
     maintenance     = slider_maintenance.value/12
+    monthly_investment = slider_monthly_investment.value
+    rent_income     = slider_rent_income.value
     expenses        = levies+tax+insurance+water+maintenance
 
     rent_start          = slider_rent.value 
@@ -214,11 +293,13 @@ def update_data(attrname, old, new):
     buy_data = buy(houseprice, deposit, interest, period, growth, expenses, inflation)
     rent_data = rent(rent_start, rent_increase, savings_interest, buy_data)
     rent_to_buy_data = rent_to_buy(buy_delay, interest, growth, inflation, rent_data, buy_data)
+    buy_and_rent_data = buy_and_rent(buy_data, rent_start, rent_income, rent_increase, savings_interest, monthly_investment)
 
     # Calculate ROI for 3 cases
     buy_monthly_roi     = buy_data["nett"][-1]/buy_data["month"][-1]
     rent_monthly_roi    = rent_data["savings"][-1]/rent_data["month"][-1]
     r2b_monthly_roi 	= rent_to_buy_data["nett"][-1]/rent_to_buy_data["month"][-1]
+    rab_monthly_roi 	= buy_and_rent_data["nett"][-1]/buy_and_rent_data["month"][-1]
 
     # Calculate the monthly expenses and income for buy and rent cases
     buy_initial_expenses = buy_data["bond"][0]-deposit
@@ -226,19 +307,25 @@ def update_data(attrname, old, new):
     buy_income      = buy_data["growth_accum"]
     rent_expenses   = rent_data["rent_accum"]
     rent_income     = rent_data["interest_accum"]
+    buy_and_rent_expenses = buy_expenses + buy_and_rent_data["rent_out_accum"] 
+    buy_and_rent_income = buy_income + buy_and_rent_data["interest_accum"] + buy_and_rent_data["rent_in_accum"] 
     buy_nett        = buy_income - buy_expenses - buy_initial_expenses
     rent_nett       = rent_income - rent_expenses
+    buy_and_rent_nett       = buy_and_rent_income - buy_and_rent_expenses- buy_initial_expenses 
 
     # Update plot sources
     source_buy_data.data = buy_data
     source_rent_data.data = rent_data
     source_rent_to_buy_data.data = rent_to_buy_data
-    source_nett_data.data = {"month":buy_data["month"], "buy nett":buy_nett, "rent nett":rent_nett} 
+    source_buy_and_rent_data.data = buy_and_rent_data
+    source_nett_data.data = {"month":buy_data["month"], "buy nett":buy_nett, "rent nett":rent_nett, "buy and rent nett":buy_and_rent_nett} 
+    # TODO
 
     # Update text items
     div_buy_roi.text    = f"Buy  ROI: {buy_monthly_roi:.1f}"
     div_rent_roi.text   = f"Rent ROI: {rent_monthly_roi:.1f}"
     div_r2b_roi.text    = f"R2B  ROI: {r2b_monthly_roi:.1f}"
+    div_rab_roi.text    = f"RAB  ROI: {rab_monthly_roi:.1f}"
 
 # Set up data
 data = {"month":[], "housevalue":[], "growth_accum":[], "expenses":[], 
@@ -248,13 +335,18 @@ source_buy_data = ColumnDataSource(data=data)
 source_rent_to_buy_data = ColumnDataSource(data=data)
 data = {"month":[], "savings":[], "rent":[], "rent_accum":[], "interest":[], "interest_accum":[]}
 source_rent_data = ColumnDataSource(data=data)
-data = {"month":[], "buy nett":[], "rent nett":[]}
+data = {"month":[], "buy nett":[], "rent nett":[], "buy and rent nett":[]}
 source_nett_data = ColumnDataSource(data=data)
+data = {"month":[] , "savings":[], "rent_in":[], "rent_in_accum":[], 
+        "rent_out":[], "rent_out_accum":[], "interest":[], "interest_accum":[],
+         "nett":[]}
+source_buy_and_rent_data = ColumnDataSource(data=data)
 
 # Setup text objects
 div_buy_roi             = Div(text="") 
 div_rent_roi            = Div(text="") 
 div_r2b_roi             = Div(text="") 
+div_rab_roi             = Div(text="") 
 
 # Set up plot
 tools = "crosshair,pan,reset,save,wheel_zoom"
@@ -332,6 +424,9 @@ plot_e.line('month', 'savings', source=source_rent_data,
 plot_e.line('month', 'nett', source=source_rent_to_buy_data, 
             legend="ROI Rent2Buy", color="green",
             line_width=lw, line_alpha=la)
+plot_e.line('month', 'nett', source=source_buy_and_rent_data, 
+            legend="ROI BuyAndRent", color="magenta",
+            line_width=lw, line_alpha=la)
 plot_e.legend.location="top_left"
 plot_e.legend.click_policy="hide"
 
@@ -340,7 +435,10 @@ plot_f.line('month', 'buy nett', source=source_nett_data,
             legend="Buy Nett", color="red",
             line_width=lw, line_alpha=la)
 plot_f.line('month', 'rent nett', source=source_nett_data, 
-            legend="Rent Nent", color="blue",
+            legend="Rent Nett", color="blue",
+            line_width=lw, line_alpha=la)
+plot_f.line('month', 'buy and rent nett', source=source_nett_data, 
+            legend="Buy and Rent Nett", color="magenta",
             line_width=lw, line_alpha=la)
 plot_f.legend.location="top_left"
 plot_f.legend.click_policy="hide"
@@ -351,7 +449,7 @@ slider_deposit      = Slider(title="Deposit",       value=50000, start=0, end=20
 slider_interest     = Slider(title="Bond Interest (yearly)", value=0.09, start=0.06, end=0.11, step=0.005)
 slider_growth       = Slider(title="Property Growth (yearly)", value=0.08, start=-0.015, end=0.12, step=0.005)
 slider_inflation    = Slider(title="Inflation (yearly)",     value=0.06, start=0.04, end=0.07, step=0.005)
-slider_period       = Slider(title="Bond Period (months)",   value=15*12, start=5*12, end=30*12, step=1)
+slider_period       = Slider(title="Bond Period (months)",   value=15*12, start=1*12, end=30*12, step=1)
 slider_levies       = Slider(title="Levies (monthly)",        value=300, start=0, end=5000, step=100)
 slider_tax          = Slider(title="Tax (monthly)",           value=1100, start=0, end=5000, step=100)
 slider_insurance    = Slider(title="Insurance (monthly)",     value=1100, start=0, end=5000, step=100)
@@ -361,6 +459,9 @@ slider_rent         = Slider(title="Rent",                     value=10455, star
 slider_rent_increase= Slider(title="Rent Increase",            value=0.1, start=0.05, end=0.15, step=0.01)
 slider_savings_interest= Slider(title="Interest on Savings (yearly)",  value=0.035, start=0.001, end=0.1, step=0.001)
 slider_buy_delay    = Slider(title="Buy Delay (months)",  value=7*12, start=3, end=30*12, step=1)
+slider_monthly_investment = Slider(title="Monthly Investment (buy and rent)",  value=5000, start=0, end=50000, step=100)
+slider_rent_income = Slider(title="Rent Income (buy and rent)",  value=2000, start=0, end=20000, step=100)
+
 slider_list = [slider_houseprice, 
                slider_deposit, 
                slider_interest, 
@@ -375,12 +476,15 @@ slider_list = [slider_houseprice,
                slider_rent,
                slider_rent_increase,
                slider_savings_interest,
-               slider_buy_delay]
+               slider_buy_delay,
+               slider_monthly_investment,
+               slider_rent_income]
+
 for w in slider_list:
     w.on_change('value', update_data)
 
 # Set up layouts and add to document
-div_list = [div_buy_roi, div_rent_roi, div_r2b_roi]
+div_list = [div_buy_roi, div_rent_roi, div_r2b_roi, div_rab_roi]
 col_inputs = column(slider_list+div_list)
 
 col_plots = column(plot_a, plot_b, plot_d, plot_e, plot_f)
